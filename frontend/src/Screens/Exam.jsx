@@ -1,4 +1,4 @@
-import React, { useEffect, useMemo, useState } from "react";
+import React, { useEffect, useState } from "react";
 import { toast } from "react-hot-toast";
 import { MdOutlineDelete, MdEdit } from "react-icons/md";
 import { IoMdAdd } from "react-icons/io";
@@ -14,7 +14,7 @@ import Loading from "../components/Loading";
 const Exam = () => {
   const [data, setData] = useState({
     name: "",
-    date: "",
+    startDate: "",
     class: "",
     examType: "mid",
     timetableLink: "",
@@ -30,42 +30,10 @@ const Exam = () => {
   const loginType = localStorage.getItem("userType");
   const [processLoading, setProcessLoading] = useState(false);
   const [dataLoading, setDataLoading] = useState(false);
-  const [subjects, setSubjects] = useState([]);
-  const [selectedSubjectIds, setSelectedSubjectIds] = useState([]);
-  const [schedules, setSchedules] = useState({}); // { subjectId: { date, startTime, endTime, marks } }
 
   useEffect(() => {
     getExamsHandler();
   }, []);
-
-  useEffect(() => {
-    // load subjects whenever class changes in the modal
-    if (showModal && data.class) {
-      fetchSubjectsForClass(data.class);
-    } else {
-      setSubjects([]);
-      setSelectedSubjectIds([]);
-      setSchedules({});
-    }
-  }, [showModal, data.class]);
-
-  const fetchSubjectsForClass = async (classNum) => {
-    try {
-      const response = await axiosWrapper.get(`/subject?class=${classNum}`, {
-        headers: {
-          "Content-Type": "application/json",
-          Authorization: `Bearer ${localStorage.getItem("userToken")}`,
-        },
-      });
-      if (response.data.success) {
-        setSubjects(response.data.data);
-      } else {
-        setSubjects([]);
-      }
-    } catch (error) {
-      setSubjects([]);
-    }
-  };
 
   const getExamsHandler = async () => {
     try {
@@ -98,7 +66,17 @@ const Exam = () => {
   };
 
   const handleFileChange = (e) => {
-    setFile(e.target.files[0]);
+    const selectedFile = e.target.files[0];
+    if (selectedFile) {
+      // Validate image file type
+      const validImageTypes = ['image/jpeg', 'image/jpg', 'image/png', 'image/gif', 'image/webp'];
+      if (!validImageTypes.includes(selectedFile.type)) {
+        toast.error("Please upload an image file (JPEG, PNG, GIF, or WebP)");
+        e.target.value = '';
+        return;
+      }
+      setFile(selectedFile);
+    }
   };
 
   const addExamHandler = async () => {
@@ -106,60 +84,43 @@ const Exam = () => {
       !data.name ||
       !data.class ||
       !data.examType ||
-      !data.totalMarks
+      !data.totalMarks ||
+      !data.startDate
     ) {
       toast.dismiss();
       toast.error("Please fill all the fields");
       return;
     }
-    // when not uploading a file, require at least one subject with schedule inputs
-    const isFileMode = !!file;
-    let selectedSchedules = [];
-    if (!isFileMode) {
-      selectedSchedules = selectedSubjectIds
-        .map((sid) => ({ sid, ...schedules[sid] }))
-        .filter((s) => s && s.date && s.startTime && s.endTime && s.marks !== undefined && s.marks !== "")
-        .map((s) => ({ subject: s.sid, date: s.date, startTime: s.startTime, endTime: s.endTime, marks: Number(s.marks) }));
-      if (selectedSchedules.length === 0) {
-        toast.dismiss();
-        toast.error("Select subjects and assign date/time/marks for each subject");
-        return;
-      }
+    // Require file for new exams, but allow editing without new file if timetableLink exists
+    if (!isEditing && !file) {
+      toast.dismiss();
+      toast.error("Please upload a timetable image");
+      return;
+    }
+    if (isEditing && !file && !data.timetableLink) {
+      toast.dismiss();
+      toast.error("Please upload a timetable image");
+      return;
     }
     try {
       setProcessLoading(true);
       toast.loading(isEditing ? "Updating Exam" : "Adding Exam");
-      let response;
-      if (isFileMode) {
-        const headers = {
-          "Content-Type": "multipart/form-data",
-          Authorization: `Bearer ${localStorage.getItem("userToken")}`,
-        };
-        const formData = new FormData();
-        formData.append("name", data.name);
-        formData.append("class", data.class);
-        formData.append("examType", data.examType);
-        formData.append("totalMarks", data.totalMarks);
+      const headers = {
+        "Content-Type": "multipart/form-data",
+        Authorization: `Bearer ${localStorage.getItem("userToken")}`,
+      };
+      const formData = new FormData();
+      formData.append("name", data.name);
+      formData.append("class", data.class);
+      formData.append("examType", data.examType);
+      formData.append("totalMarks", data.totalMarks);
+      formData.append("startDate", data.startDate);
+      if (file) {
         formData.append("file", file);
-        response = isEditing
-          ? await axiosWrapper.patch(`/exam/${selectedExamId}`, formData, { headers })
-          : await axiosWrapper.post(`/exam`, formData, { headers });
-      } else {
-        const payload = {
-          name: data.name,
-          class: data.class,
-          examType: data.examType,
-          totalMarks: data.totalMarks,
-          schedules: selectedSchedules,
-        };
-        const headers = {
-          "Content-Type": "application/json",
-          Authorization: `Bearer ${localStorage.getItem("userToken")}`,
-        };
-        response = isEditing
-          ? await axiosWrapper.patch(`/exam/${selectedExamId}`, payload, { headers })
-          : await axiosWrapper.post(`/exam`, payload, { headers });
       }
+      const response = isEditing
+        ? await axiosWrapper.patch(`/exam/${selectedExamId}`, formData, { headers })
+        : await axiosWrapper.post(`/exam`, formData, { headers });
       toast.dismiss();
       if (response.data.success) {
         toast.success(response.data.message);
@@ -170,7 +131,7 @@ const Exam = () => {
       }
     } catch (error) {
       toast.dismiss();
-      toast.error(error.response.data.message);
+      toast.error(error.response?.data?.message || "An error occurred");
     } finally {
       setProcessLoading(false);
     }
@@ -179,6 +140,7 @@ const Exam = () => {
   const resetForm = () => {
     setData({
       name: "",
+      startDate: "",
       class: "",
       examType: "mid",
       timetableLink: "",
@@ -188,9 +150,6 @@ const Exam = () => {
     setIsEditing(false);
     setSelectedExamId(null);
     setFile(null);
-    setSubjects([]);
-    setSelectedSubjectIds([]);
-    setSchedules({});
   };
 
   const deleteExamHandler = async (id) => {
@@ -205,26 +164,13 @@ const Exam = () => {
       examType: exam.examType,
       timetableLink: exam.timetableLink,
       totalMarks: exam.totalMarks,
+      startDate: exam.startDate ? new Date(exam.startDate).toISOString().split("T")[0] : "",
     });
     setSelectedExamId(exam._id);
     setIsEditing(true);
     setShowModal(true);
-    // preload schedules if present
-    if (Array.isArray(exam.schedules) && exam.schedules.length > 0) {
-      const ids = exam.schedules.map((s) => (typeof s.subject === "object" ? s.subject._id : s.subject));
-      setSelectedSubjectIds(ids);
-      const mapped = {};
-      exam.schedules.forEach((s) => {
-        const sid = typeof s.subject === "object" ? s.subject._id : s.subject;
-        mapped[sid] = {
-          date: s.date ? new Date(s.date).toISOString().split("T")[0] : "",
-          startTime: s.startTime || "",
-          endTime: s.endTime || "",
-          marks: s.marks ?? "",
-        };
-      });
-      setSchedules(mapped);
-    }
+    // Note: File cannot be preloaded in HTML file input for security reasons
+    setFile(null);
   };
 
   const confirmDelete = async () => {
@@ -273,41 +219,32 @@ const Exam = () => {
                       <div>
                         <div className="font-semibold">{exam.name}</div>
                         <div className="text-sm text-gray-600 mt-1">
-                          {exam.startDate && exam.endDate
-                            ? `${new Date(exam.startDate).toLocaleDateString()} - ${new Date(exam.endDate).toLocaleDateString()}`
-                            : "Schedule not available"}
+                          {exam.startDate
+                            ? `Starting Date: ${new Date(exam.startDate).toLocaleDateString()}`
+                            : "Date not available"}
                         </div>
                       </div>
                       <div className="text-sm text-gray-700">
-                        Class {exam.class} · {exam.examType === "mid" ? "Mid Term" : "End Term"}
+                        Class {exam.class} · {exam.examType === "mid" ? "Mid Term" : "End Term"} · Total Marks: {exam.totalMarks}
                       </div>
                     </div>
-                    <div className="px-6 py-4 overflow-x-auto">
-                      {exam.schedules && exam.schedules.length > 0 ? (
-                        <table className="min-w-full text-sm">
-                          <thead>
-                            <tr className="bg-gray-100">
-                              <th className="py-2 px-3 text-left">Subject</th>
-                              <th className="py-2 px-3 text-left">Date</th>
-                              <th className="py-2 px-3 text-left">Start</th>
-                              <th className="py-2 px-3 text-left">End</th>
-                              <th className="py-2 px-3 text-left">Marks</th>
-                            </tr>
-                          </thead>
-                          <tbody>
-                            {exam.schedules.map((s, i) => (
-                              <tr key={i} className="border-b">
-                                <td className="py-2 px-3">{s.subject?.name || "-"}</td>
-                                <td className="py-2 px-3">{s.date ? new Date(s.date).toLocaleDateString() : "-"}</td>
-                                <td className="py-2 px-3">{s.startTime || "-"}</td>
-                                <td className="py-2 px-3">{s.endTime || "-"}</td>
-                                <td className="py-2 px-3">{s.marks ?? "-"}</td>
-                              </tr>
-                            ))}
-                          </tbody>
-                        </table>
+                    <div className="px-6 py-4">
+                      {exam.timetableLink ? (
+                        <div className="space-y-2">
+                          <p className="text-sm font-medium text-gray-700">Exam Timetable:</p>
+                          <div className="border rounded-md p-2 bg-gray-50">
+                            <img
+                              src={`${process.env.REACT_APP_MEDIA_LINK}/${exam.timetableLink}`}
+                              alt={`${exam.name} Timetable`}
+                              className="max-w-full h-auto rounded"
+                              onClick={() => window.open(`${process.env.REACT_APP_MEDIA_LINK}/${exam.timetableLink}`, '_blank')}
+                              style={{ cursor: 'pointer' }}
+                            />
+                          </div>
+                          <p className="text-xs text-gray-500">Click on the image to view in full size</p>
+                        </div>
                       ) : (
-                        <div className="text-sm text-gray-600">No schedule added.</div>
+                        <div className="text-sm text-gray-600">Timetable not available.</div>
                       )}
                     </div>
                   </div>
@@ -334,10 +271,8 @@ const Exam = () => {
                     <tr key={index} className="border-b hover:bg-blue-50">
                       <td className="py-4 px-6">{item.name}</td>
                       <td className="py-4 px-6">
-                        {item.startDate && item.endDate
-                          ? `${new Date(item.startDate).toLocaleDateString()} - ${new Date(item.endDate).toLocaleDateString()}`
-                          : item.date
-                          ? new Date(item.date).toLocaleDateString()
+                        {item.startDate
+                          ? new Date(item.startDate).toLocaleDateString()
                           : "-"}
                       </td>
                       <td className="py-4 px-6">{item.class}</td>
@@ -428,6 +363,16 @@ const Exam = () => {
               </div>
               <div className="grid grid-cols-2 gap-4">
                 <div>
+                  <label className="block text-sm font-medium text-gray-700 mb-1">Starting Date of Exam</label>
+                  <input
+                    type="date"
+                    value={data.startDate}
+                    onChange={(e) => setData({ ...data, startDate: e.target.value })}
+                    className="w-full px-4 py-2 border rounded-md focus:outline-none focus:ring-2 focus:ring-blue-500"
+                    required
+                  />
+                </div>
+                <div>
                   <label className="block text-sm font-medium text-gray-700 mb-1">Total Marks</label>
                   <input
                     type="number"
@@ -437,106 +382,43 @@ const Exam = () => {
                     required
                   />
                 </div>
-                <div>
-                  <label className="block text-sm font-medium text-gray-700 mb-1">Upload Timetable (optional)</label>
-                  <div className="flex items-center space-x-4">
-                    <label className="flex-1 px-4 py-2 border rounded-md cursor-pointer hover:bg-gray-50">
-                      <span className="flex items-center justify-center">
-                        <FiUpload className="mr-2" />
-                        {file ? file.name : "Choose File"}
-                      </span>
-                      <input type="file" onChange={handleFileChange} className="hidden" />
-                    </label>
-                    {file && (
-                      <CustomButton onClick={() => setFile(null)} variant="danger" className="!p-2">
-                        <AiOutlineClose size={20} />
-                      </CustomButton>
-                    )}
-                  </div>
-                </div>
               </div>
-
-              {/* Subject multi-select and scheduling table */}
               <div>
-                <label className="block text-sm font-medium text-gray-700 mb-1">Select Subjects</label>
-                <select
-                  multiple
-                  value={selectedSubjectIds}
-                  onChange={(e) => {
-                    const options = Array.from(e.target.selectedOptions).map((o) => o.value);
-                    setSelectedSubjectIds(options);
-                  }}
-                  className="w-full px-4 py-2 border rounded-md focus:outline-none focus:ring-2 focus:ring-blue-500 min-h-[140px]"
-                >
-                  {subjects.map((s) => (
-                    <option key={s._id} value={s._id}>
-                      {s.name}
-                    </option>
-                  ))}
-                </select>
-              </div>
-
-              {selectedSubjectIds.length > 0 && (
-                <div className="mt-4">
-                  <div className="overflow-x-auto">
-                    <table className="min-w-full text-sm bg-white">
-                      <thead>
-                        <tr className="bg-gray-100">
-                          <th className="py-2 px-3 text-left">Subject</th>
-                          <th className="py-2 px-3 text-left">Date</th>
-                          <th className="py-2 px-3 text-left">Start Time</th>
-                          <th className="py-2 px-3 text-left">End Time</th>
-                          <th className="py-2 px-3 text-left">Marks</th>
-                        </tr>
-                      </thead>
-                      <tbody>
-                        {selectedSubjectIds.map((sid) => {
-                          const subj = subjects.find((s) => s._id === sid);
-                          const row = schedules[sid] || { date: "", startTime: "", endTime: "", marks: "" };
-                          return (
-                            <tr key={sid} className="border-b">
-                              <td className="py-2 px-3">{subj ? subj.name : sid}</td>
-                              <td className="py-2 px-3">
-                                <input
-                                  type="date"
-                                  value={row.date}
-                                  onChange={(e) => setSchedules((prev) => ({ ...prev, [sid]: { ...prev[sid], date: e.target.value } }))}
-                                  className="px-3 py-1 border rounded"
-                                />
-                              </td>
-                              <td className="py-2 px-3">
-                                <input
-                                  type="time"
-                                  value={row.startTime}
-                                  onChange={(e) => setSchedules((prev) => ({ ...prev, [sid]: { ...prev[sid], startTime: e.target.value } }))}
-                                  className="px-3 py-1 border rounded"
-                                />
-                              </td>
-                              <td className="py-2 px-3">
-                                <input
-                                  type="time"
-                                  value={row.endTime}
-                                  onChange={(e) => setSchedules((prev) => ({ ...prev, [sid]: { ...prev[sid], endTime: e.target.value } }))}
-                                  className="px-3 py-1 border rounded"
-                                />
-                              </td>
-                              <td className="py-2 px-3">
-                                <input
-                                  type="number"
-                                  min="0"
-                                  value={row.marks}
-                                  onChange={(e) => setSchedules((prev) => ({ ...prev, [sid]: { ...prev[sid], marks: e.target.value } }))}
-                                  className="px-3 py-1 border rounded w-24"
-                                />
-                              </td>
-                            </tr>
-                          );
-                        })}
-                      </tbody>
-                    </table>
+                <label className="block text-sm font-medium text-gray-700 mb-1">
+                  Upload Timetable {!isEditing && <span className="text-red-500">*</span>}
+                  {isEditing && <span className="text-gray-500 text-xs font-normal ml-2">(Optional - leave empty to keep existing)</span>}
+                </label>
+                {isEditing && data.timetableLink && !file && (
+                  <div className="mb-2 p-2 bg-gray-50 rounded border">
+                    <p className="text-xs text-gray-600 mb-1">Current timetable:</p>
+                    <img
+                      src={`${process.env.REACT_APP_MEDIA_LINK}/${data.timetableLink}`}
+                      alt="Current timetable"
+                      className="max-w-xs h-auto rounded border"
+                    />
                   </div>
+                )}
+                <div className="flex items-center space-x-4">
+                  <label className="flex-1 px-4 py-2 border rounded-md cursor-pointer hover:bg-gray-50">
+                    <span className="flex items-center justify-center">
+                      <FiUpload className="mr-2" />
+                      {file ? file.name : "Choose File"}
+                    </span>
+                    <input 
+                      type="file" 
+                      onChange={handleFileChange} 
+                      accept="image/*"
+                      className="hidden" 
+                    />
+                  </label>
+                  {file && (
+                    <CustomButton onClick={() => setFile(null)} variant="danger" className="!p-2">
+                      <AiOutlineClose size={20} />
+                    </CustomButton>
+                  )}
                 </div>
-              )}
+                <p className="text-xs text-gray-500 mt-1">Please upload an image file (JPEG, PNG, GIF, or WebP)</p>
+              </div>
               <div className="flex justify-end space-x-4 mt-6">
                 <CustomButton onClick={resetForm} variant="secondary">
                   Cancel

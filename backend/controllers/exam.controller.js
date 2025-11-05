@@ -24,45 +24,33 @@ const getAllExamsController = async (req, res) => {
 
 const addExamController = async (req, res) => {
   try {
-    const formData = { ...req.body };
-    // schedules may arrive as JSON string when multipart/form-data is used
-    if (typeof formData.schedules === "string") {
-      try {
-        formData.schedules = JSON.parse(formData.schedules);
-      } catch (e) {
-        formData.schedules = [];
-      }
-    }
-    if (!Array.isArray(formData.schedules)) {
-      formData.schedules = [];
+    const { name, class: classNum, examType, totalMarks, startDate } = req.body;
+
+    // Validate required fields
+    if (!name || !classNum || !examType || !totalMarks || !startDate) {
+      return ApiResponse.error("All fields are required (name, class, examType, totalMarks, startDate)", 400).send(res);
     }
 
-    if (req.file) {
-      formData.timetableLink = req.file.filename;
+    // Require timetable file upload
+    if (!req.file) {
+      return ApiResponse.error("Timetable image file is required", 400).send(res);
     }
 
-    // derive startDate/endDate from schedules if provided
-    if (formData.schedules.length > 0) {
-      const dates = formData.schedules
-        .map((s) => new Date(s.date))
-        .filter((d) => !isNaN(d));
-      if (dates.length > 0) {
-        formData.startDate = new Date(Math.min(...dates));
-        formData.endDate = new Date(Math.max(...dates));
-      }
-      // ensure marks provided per subject for schedule-based creation
-      const missingMarks = formData.schedules.some(
-        (s) => s.marks === undefined || s.marks === null || isNaN(Number(s.marks))
-      );
-      if (missingMarks) {
-        return ApiResponse.error("Provide marks for each scheduled subject.", 400).send(res);
-      }
+    // Validate file is an image (check mimetype)
+    const validImageTypes = ['image/jpeg', 'image/jpg', 'image/png', 'image/gif', 'image/webp'];
+    if (!validImageTypes.includes(req.file.mimetype)) {
+      return ApiResponse.error("Please upload an image file (JPEG, PNG, GIF, or WebP)", 400).send(res);
     }
 
-    // basic validation: either schedules or a timetable file should exist
-    if ((!formData.schedules || formData.schedules.length === 0) && !formData.timetableLink) {
-      return ApiResponse.error("Provide schedules or upload a timetable file.", 400).send(res);
-    }
+    const formData = {
+      name,
+      class: Number(classNum),
+      examType,
+      totalMarks: Number(totalMarks),
+      startDate: new Date(startDate),
+      timetableLink: req.file.filename,
+      schedules: [], // Empty schedules array since we're using image upload
+    };
 
     const exam = await Exam.create(formData);
     return ApiResponse.success(exam, "Exam Added Successfully!").send(res);
@@ -73,37 +61,39 @@ const addExamController = async (req, res) => {
 
 const updateExamController = async (req, res) => {
   try {
-    const formData = { ...req.body };
-    if (typeof formData.schedules === "string") {
-      try {
-        formData.schedules = JSON.parse(formData.schedules);
-      } catch (e) {
-        formData.schedules = [];
-      }
+    const { name, class: classNum, examType, totalMarks, startDate } = req.body;
+
+    // Validate required fields
+    if (!name || !classNum || !examType || !totalMarks || !startDate) {
+      return ApiResponse.error("All fields are required (name, class, examType, totalMarks, startDate)", 400).send(res);
     }
-    if (!Array.isArray(formData.schedules)) {
-      formData.schedules = [];
+
+    // Check if exam exists
+    const existingExam = await Exam.findById(req.params.id);
+    if (!existingExam) {
+      return ApiResponse.error("Exam not found", 404).send(res);
     }
+
+    const formData = {
+      name,
+      class: Number(classNum),
+      examType,
+      totalMarks: Number(totalMarks),
+      startDate: new Date(startDate),
+      schedules: [], // Empty schedules array since we're using image upload
+    };
+
+    // Update timetable file if provided
     if (req.file) {
+      // Validate file is an image
+      const validImageTypes = ['image/jpeg', 'image/jpg', 'image/png', 'image/gif', 'image/webp'];
+      if (!validImageTypes.includes(req.file.mimetype)) {
+        return ApiResponse.error("Please upload an image file (JPEG, PNG, GIF, or WebP)", 400).send(res);
+      }
       formData.timetableLink = req.file.filename;
-    }
-    if (formData.schedules.length > 0) {
-      const dates = formData.schedules
-        .map((s) => new Date(s.date))
-        .filter((d) => !isNaN(d));
-      if (dates.length > 0) {
-        formData.startDate = new Date(Math.min(...dates));
-        formData.endDate = new Date(Math.max(...dates));
-      } else {
-        formData.startDate = undefined;
-        formData.endDate = undefined;
-      }
-      const missingMarks = formData.schedules.some(
-        (s) => s.marks === undefined || s.marks === null || isNaN(Number(s.marks))
-      );
-      if (missingMarks) {
-        return ApiResponse.error("Provide marks for each scheduled subject.", 400).send(res);
-      }
+    } else {
+      // Keep existing timetable if not updating
+      formData.timetableLink = existingExam.timetableLink;
     }
 
     const exam = await Exam.findByIdAndUpdate(req.params.id, formData, {
